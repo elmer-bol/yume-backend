@@ -32,6 +32,7 @@ origins = [
     "http://localhost:3000",      # React (Create React App)
     "http://localhost:5173",      # React (Vite) - TU CASO ACTUAL
     "http://127.0.0.1:5173",      # React (Vite IP local)
+    "https://yume-app.onrender.com",    # Direccion externa
 ]
 
 app.add_middleware(
