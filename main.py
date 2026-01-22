@@ -26,14 +26,15 @@ app = FastAPI(
     description="API de gestión financiera basada en el modelo universal de cobros y egresos."
 )
 
-# 2. CONFIGURACIÓN DE CORS (¡AQUÍ ARRIBA!) 🛡️
+# 2. CONFIGURACIÓN DE CORS (¡AQUÍ ARRIBA!) 
 # Definimos quién tiene permiso para hablar con el Backend
 origins = [
     "http://localhost:3000",      # React (Create React App)
     "http://localhost:5173",      # React (Vite) - TU CASO ACTUAL
     "http://127.0.0.1:5173",      # React (Vite IP local)
-    "https://yume-app.onrender.com",    # Direccion externa
-]
+    "https://yume-backend-edgp.onrender.com",    # Direccion externa back end
+    "https://yume-app.onrender.com",  # Direccion externa Frontend 
+] 
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +44,7 @@ app.add_middleware(
     allow_headers=["*"],  # Permitir Authorization, Content-Type, etc.
 )
 
-# 3. INCLUSIÓN DE RUTAS (DESPUÉS DEL MIDDLEWARE) 🛣️
+# 3. INCLUSIÓN DE RUTAS (DESPUÉS DEL MIDDLEWARE) 
 app.include_router(auth.router, prefix="/v1") 
 app.include_router(medio_ingreso.router, prefix="/v1")
 app.include_router(categorias.router, prefix="/v1")
