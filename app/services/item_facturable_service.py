@@ -1,12 +1,12 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc, func, and_
+from sqlalchemy import desc, func, and_, asc
 from fastapi import HTTPException, status
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 from calendar import monthrange
 
 from app.db import models
-from app.db.models import RelacionCliente
+from app.db.models import RelacionCliente, UnidadServicio
 from app.schemas import item_facturable_schema as schemas
 
 class ItemFacturableService:
@@ -21,9 +21,18 @@ class ItemFacturableService:
         return self.db.query(models.ItemFacturable).filter(models.ItemFacturable.id_item == item_id).first()
     
     def get_items_by_unidad(self, unidad_id: int) -> List[models.ItemFacturable]:
+        """
+        Modificado: Ahora solo devuelve lo que es COBRABLE (Pendiente y con Saldo).
+        Oculta automáticamente lo Pagado, Anulado y CONGELADO.
+        """
         return self.db.query(models.ItemFacturable)\
             .options(joinedload(models.ItemFacturable.concepto))\
-            .filter(models.ItemFacturable.id_unidad == unidad_id)\
+            .filter(
+                models.ItemFacturable.id_unidad == unidad_id,
+                models.ItemFacturable.estado.notin_(['pagado', 'anulado', 'cancelado', 'congelado']),
+                models.ItemFacturable.saldo_pendiente > 0.01  # <--- El filtro real es el saldo
+            )\
+            .order_by(asc(models.ItemFacturable.fecha_vencimiento))\
             .all()
     
     def get_all_items(self, skip: int = 0, limit: int = 100) -> List[models.ItemFacturable]:
@@ -196,10 +205,10 @@ class ItemFacturableService:
         return vencidos
 
     # ----------------------------------------------------------------------
-    # 5. GENERACIÓN INTELIGENTE (CON AUDITORÍA)
+    # 5. GENERACIÓN INTELIGENTE (CON REACTIVACIÓN DE ANULADOS)
     # ----------------------------------------------------------------------
     def generar_cuota_con_cruce(self, datos: schemas.GenerarCuotaRequest, id_usuario: int = None) -> Dict[str, Any]:
-        # A. AUTO-COMPLETADO
+        # A. AUTO-COMPLETADO (Igual que antes)
         id_persona_final = datos.id_persona
         monto_final = datos.monto_base
         relacion = None
@@ -216,42 +225,64 @@ class ItemFacturableService:
             if not id_persona_final: id_persona_final = relacion.id_persona
             if not monto_final: monto_final = relacion.monto_mensual
 
-        # B. VALIDACIÓN
-        exists = self.db.query(models.ItemFacturable).filter(
+        # B. BÚSQUEDA DE EXISTENTES (INCLUYENDO ANULADOS)
+        # Quitamos el filtro "!= anulado" para ver TODO lo que hay
+        item_existente = self.db.query(models.ItemFacturable).filter(
             models.ItemFacturable.periodo == datos.periodo,
             models.ItemFacturable.id_unidad == datos.id_unidad,
-            models.ItemFacturable.id_concepto == datos.id_concepto,
-            models.ItemFacturable.estado != 'anulado'
+            models.ItemFacturable.id_concepto == datos.id_concepto
         ).first()
-        if exists:
-            raise HTTPException(status_code=409, detail=f"Ya existe cuota para {datos.periodo}")
 
-        # C. PREPARAR OBJETO
-        año_calc = int(datos.periodo[:4])
-        mes_calc = int(datos.periodo[5:7])
-        
-        nuevo_item = models.ItemFacturable(
-            id_unidad=datos.id_unidad,
-            id_persona=id_persona_final,
-            id_concepto=datos.id_concepto,
+        nuevo_item = None # Variable para trabajar
+
+        # C. LÓGICA DE DECISIÓN (REACTIVAR vs CREAR)
+        if item_existente:
+            if item_existente.estado == 'anulado':
+                # --- CASO 1: RECICLAJE (La magia ocurre aquí) ---
+                print(f"♻️ Reactivando cuota anulada ID {item_existente.id_item}...")
+                
+                # Actualizamos los datos clave
+                item_existente.estado = 'pendiente'
+                item_existente.monto_base = monto_final
+                item_existente.saldo_pendiente = monto_final
+                item_existente.fecha_vencimiento = datos.fecha_vencimiento
+                item_existente.id_persona = id_persona_final # Por si cambió el dueño
+                
+                # Auditoría de modificación
+                item_existente.id_usuario_modificacion = id_usuario
+                item_existente.fecha_modificacion = datetime.now()
+                
+                nuevo_item = item_existente # Usamos este objeto para el resto del flujo
+            else:
+                # --- CASO 2: DUPLICADO REAL ---
+                raise HTTPException(status_code=409, detail=f"Ya existe cuota activa para {datos.periodo}")
+        else:
+            # --- CASO 3: CREACIÓN NUEVA (Lo normal) ---
+            año_calc = int(datos.periodo[:4])
+            mes_calc = int(datos.periodo[5:7])
             
-            # AUDITORÍA (Aquí lo guardamos)
-            id_usuario_creador=id_usuario,
-            
-            monto_base=monto_final,
-            saldo_pendiente=monto_final,
-            periodo=datos.periodo,
-            año=año_calc,
-            mes=mes_calc,
-            fecha_vencimiento=datos.fecha_vencimiento,
-            fecha_creacion=datetime.now(),
-            estado="pendiente"
-        )
-        self.db.add(nuevo_item)
+            nuevo_item = models.ItemFacturable(
+                id_unidad=datos.id_unidad,
+                id_persona=id_persona_final,
+                id_concepto=datos.id_concepto,
+                id_usuario_creador=id_usuario,
+                monto_base=monto_final,
+                saldo_pendiente=monto_final,
+                periodo=datos.periodo,
+                año=año_calc,
+                mes=mes_calc,
+                fecha_vencimiento=datos.fecha_vencimiento,
+                fecha_creacion=datetime.now(),
+                estado="pendiente"
+            )
+            self.db.add(nuevo_item)
+
+        # Guardamos cambios preliminares (sea update o insert)
         self.db.flush() 
 
-        # D. CRUCE DE BILLETERA
+        # D. CRUCE DE BILLETERA (Lógica igual, pero usa 'nuevo_item' que puede ser el reciclado)
         if not relacion:
+            # Buscamos la relación si no la teníamos (para ver saldo a favor)
             relacion = self.db.query(RelacionCliente).filter(
                 RelacionCliente.id_persona == id_persona_final,
                 RelacionCliente.id_unidad == datos.id_unidad,
@@ -259,9 +290,10 @@ class ItemFacturableService:
             ).first()
 
         monto_descontado = 0.0
-        mensaje = "Cuota generada exitosamente."
+        mensaje_resp = "Cuota generada exitosamente."
 
-        if relacion and relacion.saldo_favor > 0:
+        # Solo aplicamos saldo si la cuota está pendiente (por seguridad)
+        if nuevo_item.estado == 'pendiente' and relacion and relacion.saldo_favor > 0:
             saldo_disponible = float(relacion.saldo_favor)
             deuda_inicial = float(nuevo_item.monto_base)
             
@@ -277,18 +309,18 @@ class ItemFacturableService:
                     nuevo_item.estado = "pagado_parcial"
                 
                 monto_descontado = monto_a_usar
-                mensaje = f"Se descontaron {monto_descontado} automáticamente del saldo a favor."
+                mensaje_resp = f"Se descontaron {monto_descontado} automáticamente del saldo a favor."
 
         self.db.commit()
         self.db.refresh(nuevo_item)
         
         return {
-            "mensaje": mensaje,
+            "mensaje": mensaje_resp,
             "item": nuevo_item,
             "saldo_usado": monto_descontado,
             "saldo_remanente": float(relacion.saldo_favor) if relacion else 0.0
         }
-
+    
     # ----------------------------------------------------------------------
     # 6. UTILIDADES Y GENERACIÓN MASIVA (CON AUDITORÍA)
     # ----------------------------------------------------------------------
@@ -358,13 +390,26 @@ class ItemFacturableService:
         }
 
     def generar_cuotas_globales(self, datos: schemas.GenerarGlobalRequest, id_usuario: int = None):
-        contratos_activos = self.db.query(RelacionCliente).filter(
-            RelacionCliente.estado == 'Activo'
-        ).all()
+        # 1. INICIO DE LA CONSULTA (Uniendo Contratos con Unidades)
+        # Usamos .join(UnidadServicio) para poder ver de qué tipo es la unidad del contrato
+        query = self.db.query(RelacionCliente).join(UnidadServicio).filter(
+            RelacionCliente.estado == 'Activo',
+            RelacionCliente.tipo_relacion != 'Interno'
+        )
+
+        # 2. APLICAR FILTRO DINÁMICO
+        # Si el usuario eligió algo específico (que no sea "Todos" ni vacío)
+        if datos.tipo_unidad and datos.tipo_unidad != "Todos":
+            query = query.filter(UnidadServicio.tipo_unidad == datos.tipo_unidad)
+
+        # 3. EJECUTAR CONSULTA
+        contratos_activos = query.all()
 
         if not contratos_activos:
-            return {"mensaje": "No hay contratos activos.", "procesados": 0}
+            filtro_texto = datos.tipo_unidad if datos.tipo_unidad else "General"
+            return {"mensaje": f"No hay contratos activos para: {filtro_texto}", "procesados": 0}
 
+        # 4. PREPARAR FECHAS
         año = int(datos.periodo[:4])
         mes = int(datos.periodo[5:7])
         _, ultimo_dia = monthrange(año, mes)
@@ -373,33 +418,43 @@ class ItemFacturableService:
         resultados = []
         contador_exito = 0
 
+        # 5. GENERAR UNO POR UNO
         for contrato in contratos_activos:
+
+             # --- LÓGICA DE DECISIÓN DE MONTO ---
+            if datos.monto_override and datos.monto_override > 0:
+                # Caso A: Cuota Extraordinaria (Monto Fijo para todos, ej: 220 Bs)
+                monto_final = datos.monto_override
+            else:
+                # Caso B: Expensa Normal (Monto según contrato individual)
+                monto_final = contrato.monto_mensual   
+
             req = schemas.GenerarCuotaRequest(
                 id_unidad=contrato.id_unidad,
                 id_persona=contrato.id_persona,
-                monto_base=contrato.monto_mensual,
+                monto_base=monto_final,
                 id_concepto=datos.id_concepto,
                 periodo=datos.periodo,
                 fecha_vencimiento=fecha_venc
             )
 
             try:
-                # PASAMOS EL USUARIO AQUÍ
+                # Reutilizamos la lógica que ya tenías (que revisa billeteras, etc.)
                 res = self.generar_cuota_con_cruce(req, id_usuario)
                 
                 resultados.append({
                     "unidad": contrato.id_unidad,
                     "estado": "OK", 
-                    "detalle": f"Generado. Estado: {res['item'].estado}"
+                    "detalle": f"Generado ({res['item'].estado})"
                 })
                 contador_exito += 1
                 
             except Exception as e:
-                # Simplificado para brevedad
+                # Si falla uno, no detenemos a los demás
                 resultados.append({"unidad": contrato.id_unidad, "estado": "ERROR", "detalle": str(e)})
 
         return {
-            "mensaje": f"Global finalizado. {contador_exito} generados.",
+            "mensaje": f"Proceso finalizado. {contador_exito} cuotas generadas (Filtro: {datos.tipo_unidad or 'Todos'}).",
             "detalles": resultados
         }
     # Agrega este método dentro de la clase ItemFacturableService
@@ -471,4 +526,69 @@ class ItemFacturableService:
         return {
             "mensaje": f"Proceso finalizado. {len(resultados)} periodos procesados.",
             "detalles": resultados
+        }
+    
+    # ----------------------------------------------------------------------
+    # 7. ANULACIÓN MASIVA (ROLLBACK) - SOPORTE TIPOS DINÁMICOS
+    # ----------------------------------------------------------------------
+    def anular_cuotas_masivas(self, datos: schemas.AnulacionMasivaRequest, id_usuario: int):
+        
+        # 1. INICIAR CONSULTA CON JOIN
+        # Unimos ItemFacturable con UnidadServicio para poder ver el 'tipo_unidad'
+        query = self.db.query(models.ItemFacturable).join(models.UnidadServicio).filter(
+            models.ItemFacturable.periodo == datos.periodo,
+            models.ItemFacturable.id_concepto == datos.id_concepto,
+            
+            # SEGURIDAD CRÍTICA:
+            # Solo anulamos si está pendiente Y si el saldo es igual al total.
+            # (Significa que nadie ha pagado ni un centavo todavía).
+            models.ItemFacturable.estado == 'pendiente',
+            models.ItemFacturable.saldo_pendiente == models.ItemFacturable.monto_base
+        )
+
+        # 2. LÓGICA DE FILTRADO DINÁMICO
+        # Definimos qué valores significan "No filtrar"
+        VALORES_IGNORAR = ["Todos (Sin Filtro)", "Todos", "", None]
+
+        # Si el usuario mandó un tipo específico (ej: "Helipuerto"), filtramos.
+        if datos.tipo_unidad not in VALORES_IGNORAR:
+            # Aquí la BD se encarga. Si mañana creas "Nave Espacial", funcionará igual.
+                query = self.db.query(models.ItemFacturable).join(
+                models.UnidadServicio, 
+                models.ItemFacturable.id_unidad == models.UnidadServicio.id_unidad
+            ).filter(
+                models.ItemFacturable.periodo == datos.periodo,
+                models.ItemFacturable.id_concepto == datos.id_concepto,
+                models.ItemFacturable.estado == 'pendiente',
+                models.ItemFacturable.saldo_pendiente == models.ItemFacturable.monto_base
+            )
+
+        # 3. OBTENER ITEMS
+        items_a_anular = query.all()
+        cantidad = len(items_a_anular)
+
+        if cantidad == 0:
+            return {
+                "mensaje": f"No se encontró nada para anular en {datos.periodo} (Filtro: {datos.tipo_unidad or 'Todos'}).", 
+                "anulados": 0
+            }
+
+        # 4. EJECUTAR ANULACIÓN (Iteramos para auditar uno por uno)
+        for item in items_a_anular:
+            item.estado = 'anulado'
+            item.saldo_pendiente = 0.00
+            
+            # Auditoría Interna
+            item.id_usuario_modificacion = id_usuario
+            item.fecha_modificacion = datetime.now()
+            
+            # OPCIONAL: Si tienes tabla AuditLog, descomenta esto:
+            # self._registrar_auditoria(item.id_item, "ANULACION_MASIVA", datos.motivo, id_usuario)
+
+        self.db.commit()
+
+        return {
+            "mensaje": f"Operación exitosa. Se anularon {cantidad} cuotas de tipo '{datos.tipo_unidad or 'Todos'}'.",
+            "anulados": cantidad,
+            "motivo": datos.motivo
         }

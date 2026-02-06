@@ -1,3 +1,4 @@
+# Archivo: app/api/v1/endpoints/medio_ingreso.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -12,7 +13,7 @@ from app.core.config import ROLES_LECTURA, ROLES_ADMIN
 
 router = APIRouter(
     prefix="/medios-ingreso",
-    tags=["Medios de Ingreso"]
+    tags=["Medios de Ingreso (Billeteras)"]
 )
 
 # Dependencia para inyectar el servicio
@@ -20,7 +21,8 @@ def get_service(db: Session = Depends(get_db)) -> MedioIngresoService:
     return MedioIngresoService(db)
 
 # 1. CREAR (Solo Admin)
-@router.post("/", response_model=schemas.MedioIngreso, status_code=status.HTTP_201_CREATED)
+# CAMBIO: response_model=schemas.MedioIngresoResponse
+@router.post("/", response_model=schemas.MedioIngresoResponse, status_code=status.HTTP_201_CREATED)
 def create_medio_ingreso(
     medio_ingreso_in: schemas.MedioIngresoCreate,
     service: MedioIngresoService = Depends(get_service),
@@ -31,7 +33,8 @@ def create_medio_ingreso(
     return service.create(medio_ingreso_in)
 
 # 2. LISTAR (Todos)
-@router.get("/", response_model=List[schemas.MedioIngreso])
+# CAMBIO: List[schemas.MedioIngresoResponse]
+@router.get("/", response_model=List[schemas.MedioIngresoResponse])
 def read_medios_ingreso(
     skip: int = 0, 
     limit: int = 100, 
@@ -43,7 +46,8 @@ def read_medios_ingreso(
     return service.get_all(skip=skip, limit=limit)
 
 # 3. LEER UNO (Todos)
-@router.get("/{medio_ingreso_id}", response_model=schemas.MedioIngreso)
+# CAMBIO: schemas.MedioIngresoResponse
+@router.get("/{medio_ingreso_id}", response_model=schemas.MedioIngresoResponse)
 def read_medio_ingreso(
     medio_ingreso_id: int, 
     service: MedioIngresoService = Depends(get_service),
@@ -54,7 +58,8 @@ def read_medio_ingreso(
     return service.get_by_id(medio_ingreso_id)
 
 # 4. ACTUALIZAR (Solo Admin)
-@router.put("/{medio_ingreso_id}", response_model=schemas.MedioIngreso)
+# CAMBIO: schemas.MedioIngresoResponse
+@router.put("/{medio_ingreso_id}", response_model=schemas.MedioIngresoResponse)
 def update_medio_ingreso_endpoint(
     medio_ingreso_id: int, 
     medio_ingreso_in: schemas.MedioIngresoUpdate, 
@@ -66,7 +71,8 @@ def update_medio_ingreso_endpoint(
     return service.update(medio_ingreso_id, medio_ingreso_in)
 
 # 5. ELIMINAR (Solo Admin)
-@router.delete("/{medio_ingreso_id}", status_code=status.HTTP_204_NO_CONTENT)
+# CAMBIO: Ahora devuelve el objeto modificado (Soft Delete), por lo que quitamos el 204 y agregamos response_model
+@router.delete("/{medio_ingreso_id}", response_model=schemas.MedioIngresoResponse)
 def delete_medio_ingreso_endpoint(
     medio_ingreso_id: int, 
     service: MedioIngresoService = Depends(get_service),
@@ -74,4 +80,4 @@ def delete_medio_ingreso_endpoint(
 ):
     if current_user.rol.nombre not in ROLES_ADMIN:
          raise HTTPException(status_code=403, detail="No tiene permisos para eliminar medios de pago.")
-    service.delete(medio_ingreso_id)
+    return service.delete(medio_ingreso_id)

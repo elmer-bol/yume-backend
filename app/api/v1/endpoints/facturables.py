@@ -27,6 +27,25 @@ router = APIRouter(
 # ENDPOINTS
 # ----------------------------------------------------
 
+# --- 0. ANULACIÓN MASIVA (ROLLBACK) - ¡NUEVO! ---
+# (Colocar esto al principio para evitar conflicto con /{item_id})
+
+@router.post("/anulacion-masiva", status_code=200)
+def anular_masivamente_endpoint(
+    datos: schemas.AnulacionMasivaRequest,
+    servicio: ItemFacturableService = Depends(get_item_facturable_service),
+    current_user: models.Usuario = Depends(get_current_user)
+):
+    """
+    EMERGENCIA: Anula todas las cuotas PENDIENTES de un periodo/concepto.
+    Permite deshacer una Generación Masiva errónea.
+    """
+    # Solo Admin y SuperAdmin
+    if current_user.rol.nombre not in ROLES_ADMIN:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden hacer Rollback masivo.")
+
+    return servicio.anular_cuotas_masivas(datos, current_user.id_usuario)
+
 # --- 1. CREACIÓN (CON AUDITORÍA) ---
 
 @router.post(

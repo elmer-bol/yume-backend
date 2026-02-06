@@ -1,5 +1,6 @@
 # Archivo: app/services/persona_service.py
 from sqlalchemy.orm import Session
+from sqlalchemy import asc
 from typing import List, Optional
 from app.db import models
 from app.schemas import persona_schema as schemas
@@ -15,9 +16,12 @@ class PersonaService:
     def get_persona_by_id(self, persona_id: int) -> Optional[models.Persona]:
         return self.db.query(models.Persona).filter(models.Persona.id_persona == persona_id).first()
 
-    def get_all_personas(self, skip: int = 0, limit: int = 100) -> List[models.Persona]:
-        return self.db.query(models.Persona).offset(skip).limit(limit).all()
-
+    def get_all_personas(self, skip: int = 0, limit: int = 500) -> List[models.Persona]:
+        # CAMBIO: Ordenamos por id_persona ascendente (del más antiguo al nuevo)
+        return self.db.query(models.Persona)\
+            .order_by(asc(models.Persona.id_persona))\
+            .offset(skip).limit(limit).all()
+    
     def get_filtered_personas(self, filters: schemas.PersonaFilter) -> List[models.Persona]:
         query = self.db.query(models.Persona)
         

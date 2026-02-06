@@ -1,6 +1,6 @@
 # Archivo: app/services/relacion_cliente_service.py
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, asc
 from typing import List, Optional
 from datetime import date
 
@@ -34,7 +34,7 @@ class RelacionClienteService:
         if filtros.tipo_relacion:
             query = query.filter(models.RelacionCliente.tipo_relacion == filtros.tipo_relacion)
 
-        query = query.order_by(desc(models.RelacionCliente.fecha_inicio))
+        query = query.order_by(desc(models.RelacionCliente.id_relacion))
         return query.offset(skip).limit(limit).all()
 
     def create_relacion(self, relacion_in: schemas.RelacionClienteCreate) -> models.RelacionCliente:

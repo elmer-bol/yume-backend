@@ -1,6 +1,7 @@
 # Archivo: app/services/medio_ingreso_service.py
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from typing import List
 
 from app.db import models
@@ -10,8 +11,39 @@ class MedioIngresoService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[models.MedioIngreso]:
-        return self.db.query(models.MedioIngreso).offset(skip).limit(limit).all()
+    # --- Helper Privado ---
+    def _validar_cuenta_activo(self, id_catalogo: int):
+        """Asegura que la cuenta seleccionada sea un ACTIVO (Caja/Banco)."""
+        cuenta = self.db.query(models.Categoria).filter(models.Categoria.id_catalogo == id_catalogo).first()
+        if not cuenta:
+            raise HTTPException(status_code=404, detail="Cuenta contable no encontrada")
+        
+        # Validamos por tipo 'ACTIVO' o por código que empiece con '1'
+        es_activo = cuenta.tipo == 'ACTIVO' or str(cuenta.codigo).startswith('1')
+        
+        if not es_activo:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"La cuenta '{cuenta.nombre_cuenta}' NO es un Activo. Las billeteras solo pueden enlazarse a cuentas del Grupo 1 (Activos)."
+            )
+
+    def get_all(self, skip: int = 0, limit: int = 100):
+        medios = self.db.query(models.MedioIngreso).offset(skip).limit(limit).all()
+        
+        # Mapeo manual para incluir datos de la cuenta contable
+        resultados = []
+        for m in medios:
+            # Convertimos al nuevo schema Response
+            resp = schemas.MedioIngresoResponse.model_validate(m)
+            
+            # Inyectamos datos visuales si existen
+            if m.cuenta_contable:
+                resp.nombre_cuenta = m.cuenta_contable.nombre_cuenta
+                resp.codigo_cuenta = m.cuenta_contable.codigo
+            
+            resultados.append(resp)
+            
+        return resultados
 
     def get_by_id(self, id: int) -> models.MedioIngreso:
         medio = self.db.query(models.MedioIngreso).filter(models.MedioIngreso.id_medio_ingreso == id).first()
@@ -28,20 +60,16 @@ class MedioIngresoService:
         if existe:
             raise HTTPException(status_code=409, detail=f"El medio '{medio_in.nombre}' ya existe.")
 
-        # 2. Validar que venga la cuenta (Doble seguridad)
-        if not medio_in.id_catalogo:
-             raise HTTPException(status_code=400, detail="Debe asignar una Cuenta Contable (Catálogo).")
+        # 2. Validar Cuenta Contable (ACTIVO)
+        self._validar_cuenta_activo(medio_in.id_catalogo)
 
         # 3. Crear el objeto
         db_obj = models.MedioIngreso(
             nombre=medio_in.nombre,
             tipo=medio_in.tipo,
             requiere_referencia=medio_in.requiere_referencia,
-            
-            # AQUÍ ESTABA EL ERROR: FALTABA ESTA LÍNEA 👇
-            id_catalogo=medio_in.id_catalogo, 
-            # ----------------------------------------------
-            
+            id_catalogo=medio_in.id_catalogo,     # Enlace Contable
+            limite_maximo=medio_in.limite_maximo, # Regla de Negocio
             activo=True
         )
 
@@ -53,35 +81,35 @@ class MedioIngresoService:
             
         except IntegrityError as e:
             self.db.rollback()
-            # Esto hace que el error sea "presentable" en el Frontend
-            raise HTTPException(status_code=400, detail="Error de integridad: Verifique que la Cuenta Contable exista.")
+            raise HTTPException(status_code=400, detail="Error de integridad: Verifique datos.")
         except Exception as e:
             self.db.rollback()
-            raise HTTPException(status_code=500, detail=f"Error interno al crear medio: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
     def update(self, id: int, medio_in: schemas.MedioIngresoUpdate) -> models.MedioIngreso:
         db_obj = self.get_by_id(id) # Valida 404
         
-        # --- 🔒 INICIO VALIDACIÓN DE SEGURIDAD ---
+        # --- 🔒 SEGURIDAD: PROTECCIÓN DE NOMBRES CRÍTICOS ---
         NOMBRES_PROTEGIDOS = ["efectivo", "caja", "cash"]
-        
-        # Permitimos actualizar la cuenta de 'Efectivo', pero NO su nombre.
-        # Así que verificamos si intenta cambiar el nombre a algo distinto.
         if db_obj.nombre.lower().strip() in NOMBRES_PROTEGIDOS:
+             # Si intenta cambiar el nombre a algo distinto
              if medio_in.nombre and medio_in.nombre != db_obj.nombre:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Acción denegada: No puede cambiar el nombre del registro sistema '{db_obj.nombre}'."
+                    detail=f"Acción denegada: No puede renombrar el registro de sistema '{db_obj.nombre}'."
                 )
-        # --- 🔒 FIN VALIDACIÓN DE SEGURIDAD ---
 
-        # Validar nombre único si está cambiando
+        # Validar nombre único si cambia
         if medio_in.nombre and medio_in.nombre != db_obj.nombre:
              existe = self.db.query(models.MedioIngreso).filter(models.MedioIngreso.nombre == medio_in.nombre).first()
              if existe:
                  raise HTTPException(status_code=409, detail=f"El nombre '{medio_in.nombre}' ya está en uso.")
 
-        # Actualizar campos dinámicamente (Incluye id_catalogo gracias al Schema)
+        # Validar cuenta contable si cambia
+        if medio_in.id_catalogo:
+            self._validar_cuenta_activo(medio_in.id_catalogo)
+
+        # Actualizar campos dinámicamente
         update_data = medio_in.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_obj, key, value)
@@ -91,44 +119,33 @@ class MedioIngresoService:
             self.db.refresh(db_obj)
             return db_obj
             
-        except IntegrityError as e:
+        except IntegrityError:
             self.db.rollback()
-            # Capturamos si el usuario envió un ID de cuenta que no existe
-            if "catalogo" in str(e.orig):
-                raise HTTPException(status_code=400, detail="La Cuenta Contable seleccionada no existe.")
-            
             raise HTTPException(status_code=400, detail="Error de integridad al actualizar.")
     
     def delete(self, id: int):
-        # 1. Buscamos el objeto
         db_obj = self.get_by_id(id)
-        if not db_obj:
-            raise HTTPException(status_code=404, detail="Medio de ingreso no encontrado")
-
-        # --- CANDADO DE SEGURIDAD (NUEVO) ---
-        # Lista de nombres que JAMÁS se pueden desactivar/borrar
-        # Usamos .lower() para evitar problemas de mayúsculas/minúsculas
-        NOMBRES_PROTEGIDOS = ["efectivo", "caja", "cash"]
         
+        # --- 🔒 SEGURIDAD ---
+        NOMBRES_PROTEGIDOS = ["efectivo", "caja", "cash"]
         if db_obj.nombre.lower().strip() in NOMBRES_PROTEGIDOS:
             raise HTTPException(
-                status_code=403, # Forbidden
-                detail=f"ERROR CRÍTICO: El medio '{db_obj.nombre}' es vital para el sistema y no puede ser desactivado."
+                status_code=403,
+                detail=f"ERROR CRÍTICO: El medio '{db_obj.nombre}' es vital y no puede eliminarse."
             )
-        # ------------------------------------
 
-        # 2. Verificar uso (Tu lógica histórica)
+        # Verificar uso histórico
         uso = self.db.query(models.TransaccionIngreso).filter(models.TransaccionIngreso.id_medio_ingreso == id).first()
         
         if uso:
-            # SOFT DELETE (Desactivar si tiene historia, PERO NO ES EFECTIVO)
+            # SOFT DELETE
             db_obj.activo = False
             self.db.add(db_obj)
             self.db.commit()
             self.db.refresh(db_obj)
             return db_obj 
         else:
-            # HARD DELETE (Si es nuevo y sin uso)
+            # HARD DELETE
             self.db.delete(db_obj)
             self.db.commit()
             return db_obj

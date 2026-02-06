@@ -1,5 +1,6 @@
 # Archivo: app/services/unidad_servicio_service.py
 from sqlalchemy.orm import Session
+from sqlalchemy import asc
 from typing import List, Optional
 from app.db import models
 from app.schemas import unidad_servicio_schema as schemas
@@ -12,7 +13,11 @@ class UnidadServicioService:
         return self.db.query(models.UnidadServicio).filter(models.UnidadServicio.id_unidad == unidad_id).first()
 
     def get_all_unidades(self, skip: int = 0, limit: int = 100) -> List[models.UnidadServicio]:
-        return self.db.query(models.UnidadServicio).offset(skip).limit(limit).all()
+        # return self.db.query(models.UnidadServicio).offset(skip).limit(limit).all()
+        return self.db.query(models.UnidadServicio)\
+            .filter(models.UnidadServicio.activo == True)\
+            .order_by(asc(models.UnidadServicio.id_unidad))\
+            .offset(skip).limit(limit).all()
 
     def search_unidades(self, filters: schemas.UnidadServicioFilter, skip: int = 0, limit: int = 100) -> List[models.UnidadServicio]:
         query = self.db.query(models.UnidadServicio)
@@ -45,6 +50,7 @@ class UnidadServicioService:
         db_unidad = models.UnidadServicio(
             identificador_unico=unidad_in.identificador_unico,
             tipo_unidad=unidad_in.tipo_unidad,
+            descripcion=unidad_in.descripcion,
             estado=unidad_in.estado,
             activo=True
         )

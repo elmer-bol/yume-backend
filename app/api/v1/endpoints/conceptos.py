@@ -1,3 +1,4 @@
+# Archivo: app/api/v1/endpoints/conceptos.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -20,7 +21,8 @@ router = APIRouter(
 )
 
 # 1. CREAR (Solo Admin)
-@router.post("/", response_model=schemas.ConceptoDeuda, status_code=status.HTTP_201_CREATED)
+# CAMBIO: response_model=schemas.ConceptoDeudaResponse
+@router.post("/", response_model=schemas.ConceptoDeudaResponse, status_code=status.HTTP_201_CREATED)
 def create_concepto_endpoint(
     concepto: schemas.ConceptoDeudaCreate, 
     servicio: ConceptoDeudaService = Depends(get_concepto_deuda_service),
@@ -32,7 +34,8 @@ def create_concepto_endpoint(
     return servicio.create_concepto(concepto)
 
 # 2. LISTAR (Todos)
-@router.get("/", response_model=List[schemas.ConceptoDeuda])
+# CAMBIO: List[schemas.ConceptoDeudaResponse]
+@router.get("/", response_model=List[schemas.ConceptoDeudaResponse])
 def read_all_conceptos_endpoint(
     skip: int = 0, limit: int = 100, 
     servicio: ConceptoDeudaService = Depends(get_concepto_deuda_service),
@@ -44,7 +47,8 @@ def read_all_conceptos_endpoint(
     return servicio.get_all_conceptos(skip=skip, limit=limit)
 
 # 3. LEER UNO (Todos)
-@router.get("/{concepto_id}", response_model=schemas.ConceptoDeuda)
+# CAMBIO: schemas.ConceptoDeudaResponse
+@router.get("/{concepto_id}", response_model=schemas.ConceptoDeudaResponse)
 def read_concepto_by_id_endpoint(
     concepto_id: int, 
     servicio: ConceptoDeudaService = Depends(get_concepto_deuda_service),
@@ -59,7 +63,8 @@ def read_concepto_by_id_endpoint(
     return db_concepto
 
 # 4. ACTUALIZAR (Solo Admin)
-@router.patch("/{concepto_id}", response_model=schemas.ConceptoDeuda)
+# CAMBIO: schemas.ConceptoDeudaResponse
+@router.patch("/{concepto_id}", response_model=schemas.ConceptoDeudaResponse)
 def update_concepto_endpoint(
     concepto_id: int,
     concepto_in: schemas.ConceptoDeudaUpdate,
@@ -67,24 +72,25 @@ def update_concepto_endpoint(
     current_user: models.Usuario = Depends(get_current_user)
 ):
     """
-    Actualiza un concepto (Nombre, Descripción, Monto Sugerido).
+    Actualiza un concepto (Nombre, Descripción, Cuenta Contable).
     """
     if current_user.rol.nombre not in ROLES_ADMIN:
          raise HTTPException(status_code=403, detail="No tiene permisos para modificar conceptos.")
          
     return servicio.update_concepto(concepto_id, concepto_in)
 
-# 5. ELIMINAR (Solo Admin)
-@router.delete("/{concepto_id}", status_code=status.HTTP_204_NO_CONTENT)
+# 5. ELIMINAR / DESACTIVAR (Solo Admin)
+# NOTA: Cambiamos a Soft Delete (Desactivar), por lo que ahora devuelve el objeto actualizado
+@router.delete("/{concepto_id}", response_model=schemas.ConceptoDeudaResponse)
 def delete_concepto_endpoint(
     concepto_id: int,
     servicio: ConceptoDeudaService = Depends(get_concepto_deuda_service),
     current_user: models.Usuario = Depends(get_current_user)
 ):
     """
-    Elimina un concepto SI Y SOLO SI no tiene historial de deudas.
+    Desactiva un concepto (Soft Delete).
     """
     if current_user.rol.nombre not in ROLES_ADMIN:
          raise HTTPException(status_code=403, detail="No tiene permisos para eliminar conceptos.")
          
-    servicio.delete_concepto(concepto_id)
+    return servicio.delete_concepto(concepto_id)

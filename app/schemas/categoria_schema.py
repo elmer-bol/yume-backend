@@ -3,42 +3,97 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
-# Clase para estandarizar los tipos de categoría y evitar errores de tipeo.
+# -----------------------------------------------------------------------------
+# CONSTANTES / ENUMS
+# -----------------------------------------------------------------------------
 class TipoCategoriaEnum:
-    INGRESO = "INGRESO"
-    EGRESO = "EGRESO"
+    """
+    Define los valores permitidos para el tipo de cuenta.
+    Esto evita errores de dedo (typos) en el frontend o backend.
+    """
+    ACTIVO = "ACTIVO"   # Caja, Bancos
+    PASIVO = "PASIVO"   # Deudas (Futuro)
+    INGRESO = "INGRESO" # Cobros
+    EGRESO = "EGRESO"   # Gastos
 
-# 1. Esquema Base
+# -----------------------------------------------------------------------------
+# 1. ESQUEMA BASE (Reglas comunes)
+# -----------------------------------------------------------------------------
 class CategoriaBase(BaseModel):
-    # Longitud ajustada a 50 para coincidir con el ORM.
-    nombre_cuenta: str = Field(..., max_length=50, description="Nombre descriptivo de la cuenta contable.")
+    codigo: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=20, 
+        description="Código jerárquico contable (Ej: '1.1.01'). Debe ser único.",
+        examples=["1.1.01", "5.2.1"]
+    )
     
-    # Tipo estandarizado, con max_length=10 para coincidir con el ORM.
-    tipo: str = Field(..., max_length=10, description=f"Tipo de categoría: '{TipoCategoriaEnum.INGRESO}' o '{TipoCategoriaEnum.EGRESO}'.")
-    activo: bool = Field(True, description="Indica si la categoría está disponible para ser usada.")
+    nombre_cuenta: str = Field(
+        ..., 
+        min_length=3, 
+        max_length=100, 
+        description="Nombre descriptivo de la cuenta.",
+        examples=["Caja Chica", "Servicios Básicos"]
+    )
+    
+    tipo: str = Field(
+        ..., 
+        description=f"Categoría mayor: {TipoCategoriaEnum.ACTIVO}, {TipoCategoriaEnum.INGRESO}, {TipoCategoriaEnum.EGRESO}"
+    )
+    
+    es_rubro: bool = Field(
+        False, 
+        description="True = Título agrupador (No recibe dinero). False = Cuenta imputable."
+    )
+    
+    activo: bool = Field(
+        True, 
+        description="Indica si la cuenta está disponible para operaciones."
+    )
 
-
-# 2. Esquema de Creación
+# -----------------------------------------------------------------------------
+# 2. ESQUEMA DE CREACIÓN (POST)
+# -----------------------------------------------------------------------------
 class CategoriaCreate(CategoriaBase):
+    """
+    Validaciones extra al crear. Por ahora hereda todo de Base.
+    """
     pass
 
-# 3. Esquema de Lectura (Para retornar los datos)
-class Categoria(CategoriaBase):
-    id_catalogo: int = Field(..., description="Identificador único de la categoría.")
-    
-    class Config:
-        from_attributes = True
-
-# 4. Esquema de Actualización (PATCH)
+# -----------------------------------------------------------------------------
+# 3. ESQUEMA DE ACTUALIZACIÓN (PATCH/PUT)
+# -----------------------------------------------------------------------------
 class CategoriaUpdate(BaseModel):
-    # Todos los campos son opcionales
-    nombre_cuenta: Optional[str] = Field(None, max_length=50)
-    tipo: Optional[str] = Field(None, max_length=10, description=f"Debe ser '{TipoCategoriaEnum.INGRESO}' o '{TipoCategoriaEnum.EGRESO}'.")
+    """
+    Todos los campos son opcionales porque en un PATCH puedes querer
+    cambiar solo el nombre y dejar el código igual.
+    """
+    codigo: Optional[str] = Field(None, max_length=20)
+    nombre_cuenta: Optional[str] = Field(None, max_length=100)
+    tipo: Optional[str] = None
+    es_rubro: Optional[bool] = None
     activo: Optional[bool] = None
 
-# 5. Esquema de Filtro para Búsqueda (GET con Query Params)
+# -----------------------------------------------------------------------------
+# 4. ESQUEMA DE FILTRADO (Query Params)
+# -----------------------------------------------------------------------------
 class CategoriaFilter(BaseModel):
-    """Esquema utilizado para filtrar las categorías en las consultas GET."""
-    nombre_cuenta: Optional[str] = Field(None, description="Buscar por nombre de cuenta (búsqueda parcial).")
-    tipo: Optional[str] = Field(None, description=f"Filtrar por tipo ('{TipoCategoriaEnum.INGRESO}' o '{TipoCategoriaEnum.EGRESO}').")
-    activo: Optional[bool] = Field(None, description="Filtrar por estado activo.")
+    """
+    Estructura para recibir parámetros de búsqueda en el GET.
+    """
+    nombre_cuenta: Optional[str] = Field(None, description="Búsqueda parcial por nombre")
+    tipo: Optional[str] = Field(None, description="Filtrar por ACTIVO/INGRESO/EGRESO")
+    activo: Optional[bool] = None
+
+# -----------------------------------------------------------------------------
+# 5. ESQUEMA DE RESPUESTA (Output)
+# -----------------------------------------------------------------------------
+class CategoriaResponse(CategoriaBase):
+    """
+    Lo que devuelve la API al Frontend. Incluye el ID interno de la BD.
+    """
+    id_catalogo: int = Field(..., description="ID autogenerado por la base de datos")
+
+    class Config:
+        # Esto es vital para que Pydantic lea los objetos de SQLAlchemy
+        from_attributes = True

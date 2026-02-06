@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc
 from fastapi import HTTPException, status
+from decimal import Decimal
 from typing import List, Optional
 from datetime import datetime, date
 
@@ -18,6 +19,7 @@ from app.schemas.transaccion_ingreso_schema import (
     ResultadoSimulacionIngreso,
     DetalleSimulacion
 )
+from app.services import plan_service
 
 class TransaccionIngresoService:
     def __init__(self, db: Session):
@@ -229,6 +231,19 @@ class TransaccionIngresoService:
                 item_facturable.saldo_pendiente = saldo_pendiente - monto_a_pagar
                 item_facturable.estado = "pagado" if item_facturable.saldo_pendiente <= 0.001 else "pagado_parcial"
                 
+                # ==================================================================
+                # ### NUEVO: GATILLO DE PLAN DE PAGOS (CASCADA) ###
+                # ==================================================================
+                # Si el item que acabamos de pagar pertenece a un plan (es una cuota),
+                # avisamos al servicio de planes para que distribuya este dinero en lo viejo.
+                if item_facturable.id_plan:
+                    monto_decimal = Decimal(str(monto_a_pagar))
+                    plan_service.procesar_abono_a_plan(
+                        db=self.db,
+                        item_cuota_pagada=item_facturable,
+                        monto_pagado=monto_decimal
+                    )
+
                 nuevo_detalle = models.TransaccionIngresoDetalle(
                     id_transaccion=new_ingreso.id_transaccion,
                     id_item=item_facturable.id_item,

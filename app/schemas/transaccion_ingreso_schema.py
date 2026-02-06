@@ -22,6 +22,15 @@ class RelacionClienteReporte(BaseModel):
     unidad: Optional[UnidadInfoSimple] = None
     model_config = ConfigDict(from_attributes=True)
 
+class UsuarioInfoSimple(BaseModel):
+    # 1. Cambiamos 'username' por 'email' (que es lo que tiene tu BD)
+    email: str 
+    
+    # 2. Agregamos la relación 'persona' para sacar el nombre real
+    persona: Optional[PersonaInfoSimple] = None 
+    
+    model_config = ConfigDict(from_attributes=True)
+
 # ======================================================================
 # ESQUEMAS PARA EL DETALLE
 # ======================================================================
@@ -71,7 +80,9 @@ class TransaccionIngresoBase(BaseModel):
     id_relacion: int = Field(..., description="ID de la Relación (Contrato) seleccionada.")
     id_medio_ingreso: int = Field(..., description="Medio de pago.")
     monto_total: float = Field(..., gt=0, description="Dinero total recibido.")
-    fecha: date = Field(..., description="Fecha del ingreso.")
+    # fecha: date = Field(..., description="Fecha del ingreso.")
+    fecha: Optional[date] = Field(None, description="Fecha del ingreso (Opcional, default HOY).")
+
     num_documento: Optional[str] = Field(None, max_length=50)
     descripcion: Optional[str] = Field(None, max_length=255)
     id_deposito: Optional[int] = Field(None)
@@ -147,3 +158,21 @@ class ResultadoSimulacionIngreso(BaseModel):
     monto_usado_en_deudas: float
     monto_remanente_billetera: float
     detalles_sugeridos: List[DetalleSimulacion]
+
+class TransaccionIngreso(TransaccionIngresoBase):
+    id_transaccion: int
+    estado: str
+    id_catalogo: int 
+    fecha_creacion: datetime
+    fecha_modificacion: datetime 
+    fecha_anulacion: Optional[datetime] = None
+    monto_billetera_usado: float = 0.0
+    detalles: List[TransaccionIngresoDetalle] = []  
+    relacion_cliente: Optional[RelacionClienteReporte] = None
+    
+    # --- AGREGAR ESTAS DOS LÍNEAS ---
+    id_usuario_creador: int # Para tener el ID explícito
+    usuario_creador: Optional[UsuarioInfoSimple] = None # Para tener el nombre
+    # --------------------------------
+    
+    model_config = ConfigDict(from_attributes=True)

@@ -14,7 +14,7 @@ class ItemFacturableBase(BaseModel):
     id_persona: int = Field(..., description="ID del Cliente.")
     id_concepto: int = Field(..., description="ID del Concepto.")
     monto_base: Optional[float] = Field(None, gt=0, description="Monto.")
-    periodo: str = Field(..., max_length=10, description="Format YYYY-MM")
+    periodo: str = Field(..., max_length=50, description="Format YYYY-MM")
     fecha_vencimiento: date = Field(..., description="Fecha límite.")
     concepto: Optional[ConceptoDeudaSimple] = None
 
@@ -29,7 +29,7 @@ class ItemFacturableUpdate(BaseModel):
     id_persona: Optional[int] = Field(None)
     id_concepto: Optional[int] = Field(None)
     monto_base: Optional[float] = Field(None, gt=0)
-    periodo: Optional[str] = Field(None, max_length=10)
+    periodo: Optional[str] = Field(None, max_length=50)
     fecha_vencimiento: Optional[date] = Field(None)
     class Config:
         from_attributes = True
@@ -91,6 +91,9 @@ class GenerarMasivoRequest(BaseModel):
 class GenerarGlobalRequest(BaseModel):
     id_concepto: int = Field(..., description="Concepto a cobrar")
     periodo: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    tipo_unidad: Optional[str] = None
+
+    monto_override: Optional[float] = Field(None, description="Si se envía, ignora el contrato y usa este monto fijo para todos.")
 
 # Agrega esta clase al final de tu archivo schema
 class GenerarPorContratoRequest(BaseModel):
@@ -103,3 +106,12 @@ class GenerarPorContratoRequest(BaseModel):
     
     # Opcional: Si quieres forzar un monto distinto al del contrato
     monto_override: Optional[float] = None
+
+class AnulacionMasivaRequest(BaseModel):
+    id_concepto: int  # Ej: 1 (Expensas)
+    periodo: str      # Ej: "2026-02"
+    
+    # Puede venir "Departamento", "Local", "Helipuerto" o "Todos (Sin Filtro)"
+    tipo_unidad: Optional[str] = None 
+    
+    motivo: str = Field(..., min_length=5, description="Auditoría obligatoria")

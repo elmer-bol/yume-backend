@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     depositos,
     caja
 )
+from app.api.v1.endpoints import planes
 
 # 1. Instancia principal
 app = FastAPI(
@@ -29,9 +30,9 @@ app = FastAPI(
 # 2. CONFIGURACIÓN DE CORS (¡AQUÍ ARRIBA!) 
 # Definimos quién tiene permiso para hablar con el Backend
 origins = [
-    "http://localhost:3000",      # React (Create React App)
-    "http://localhost:5173",      # React (Vite) - TU CASO ACTUAL
-    "http://127.0.0.1:5173",      # React (Vite IP local)
+    #"http://localhost:3000",      # React (Create React App)
+    #"http://localhost:5173",      # React (Vite) - TU CASO ACTUAL
+    #"http://127.0.0.1:5173",      # React (Vite IP local)
     "https://yume-backend-edgp.onrender.com",    # Direccion externa back end
     "https://yume-app.onrender.com",  # Direccion externa Frontend 
 ] 
@@ -59,6 +60,7 @@ app.include_router(reportes.router, prefix="/v1")
 app.include_router(tipos_egreso.router, prefix="/v1")
 app.include_router(depositos.router, prefix="/v1")
 app.include_router(caja.router, prefix="/v1")
+app.include_router(planes.router, prefix="/v1")
 
 @app.get("/")
 def read_root():

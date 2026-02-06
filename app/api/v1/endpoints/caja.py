@@ -8,6 +8,7 @@ from app.schemas import caja_schema
 # SEGURIDAD
 from app.core.deps import get_current_user
 from app.core.config import ROLES_LECTURA
+from app.schemas import caja_schema
 
 router = APIRouter(
     prefix="/caja",
@@ -41,3 +42,20 @@ def ver_libro_diario(
 
     servicio = CajaService(db)
     return servicio.generar_libro_caja()
+
+@router.post("/transferencia", status_code=201)
+def crear_transferencia_fondos(
+    datos: caja_schema.TransferenciaCreate,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_user)
+):
+    """
+    Mueve dinero de una billetera a otra (Ej: Banco -> Caja Chica).
+    Genera un Egreso y un Ingreso que se anulan contablemente pero mueven el saldo.
+    """
+    # Validamos permisos (Solo admins o tesoreros deberían poder mover plata)
+    if current_user.rol.nombre not in ROLES_LECTURA:
+        raise HTTPException(status_code=403, detail="No tienes permisos para transferir fondos.")
+
+    servicio = CajaService(db)
+    return servicio.realizar_transferencia(datos, current_user.id_usuario)

@@ -1,19 +1,40 @@
 # Archivo: app/schemas/egreso_schema.py
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from datetime import date, datetime
 from typing import Optional
 
-# --- INPUT: REGISTRAR GASTO ---
+# ======================================================================
+# 1. MINI-ESQUEMAS (Mapeados exactamente a tus modelos)
+# ======================================================================
+
+class TipoEgresoInfo(BaseModel):
+    nombre: str
+    model_config = ConfigDict(from_attributes=True)
+
+class MedioPagoInfo(BaseModel):
+    nombre: str
+    model_config = ConfigDict(from_attributes=True)
+
+class CuentaInfo(BaseModel):
+    nombre_cuenta: str  
+    codigo: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+# ======================================================================
+# 2. INPUT: REGISTRAR GASTO
+# ======================================================================
 class EgresoCreate(BaseModel):
-    id_tipo_egreso: int = Field(..., description="ID del tipo de documento o clasificación fiscal")
-    id_catalogo: int = Field(..., description="Cuenta contable del gasto (Debe ser tipo Egreso)")
+    id_tipo_egreso: int = Field(..., description="Carpeta organizadora (Mantenimiento, Servicios, etc.)")
     
-    # SEGURIDAD: Eliminado. Ya no confiamos en que el usuario nos diga quién es.
-    # id_administrador: int = Field(..., description="Quién registra el gasto")
+    # CUENTA CONTABLE (EN QUÉ GASTÉ - DEBE)
+    id_catalogo: int = Field(..., description="Cuenta contable del gasto (Debe ser tipo EGRESO)")
+    
+    # ORIGEN DE FONDOS (CON QUÉ PAGUÉ - HABER)
+    id_medio_pago: int = Field(..., description="Billetera de origen (Caja o Banco)")
     
     monto: float = Field(..., gt=0, description="Monto gastado")
     fecha: date
-    beneficiario: str = Field(..., min_length=3, description="A quién se le pagó (Nombre empresa o persona)")
+    beneficiario: str = Field(..., min_length=3, description="A quién se le pagó")
     num_comprobante: Optional[str] = Field(None, description="Número de factura o recibo")
     descripcion: Optional[str] = None
 
@@ -23,21 +44,23 @@ class EgresoCreate(BaseModel):
             raise ValueError("El monto del gasto debe ser mayor a 0")
         return v
 
-# --- OUTPUT: RESPUESTA AL FRONTEND ---
+# ======================================================================
+# 3. OUTPUT: RESPUESTA AL FRONTEND
+# ======================================================================
 class EgresoResponse(BaseModel):
     id_egreso: int
     monto: float
     fecha: date
     beneficiario: str
-    num_comprobante: Optional[str]
-    descripcion: Optional[str]
+    num_comprobante: Optional[str] = None
+    descripcion: Optional[str] = None
     estado: str
-    
-    # Nombres para mostrar en tablas sin hacer más peticiones
-    nombre_cuenta: str = "Desconocido"  # Del Catalogo
-    tipo_egreso: str = "Desconocido"    # Del TipoEgreso
-    
     fecha_creacion: datetime
 
-    class Config:
-        from_attributes = True
+    # Objetos anidados (Coinciden con las relaciones en models.py)
+    catalogo: Optional[CuentaInfo] = None
+    tipo_egreso: Optional[TipoEgresoInfo] = None
+    medio_pago: Optional[MedioPagoInfo] = None 
+
+    # Configuración moderna de Pydantic v2
+    model_config = ConfigDict(from_attributes=True)

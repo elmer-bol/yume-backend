@@ -9,6 +9,7 @@ class UnidadServicioBase(BaseModel):
     
     # CRÍTICO: El modelo SQLAlchemy permite que estos sean nulos/opcionales.
     tipo_unidad: Optional[str] = Field(None, max_length=50, description="Ej: Departamento, Aula Escolar, Contrato")
+    descripcion: Optional[str] = None
     estado: Optional[str] = Field('Vacío', max_length=20, description="Ej: Ocupado, Vacío, Activo, Mantenimiento")
     
     activo: bool = Field(True, description="Estado de actividad de la unidad. Usado para baja lógica.")
@@ -25,6 +26,7 @@ class UnidadServicioUpdate(BaseModel):
     """
     identificador_unico: Optional[str] = Field(None, max_length=50, description="Nuevo identificador único.")
     tipo_unidad: Optional[str] = Field(None, max_length=50)
+    descripcion: Optional[str] = None
     estado: Optional[str] = Field(None, max_length=20)
     activo: Optional[bool] = None # Permite la baja/alta lógica (Soft Delete)
 
